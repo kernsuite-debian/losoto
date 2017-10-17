@@ -1,9 +1,9 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: losoto
-Source: <url://example.com>
+Source: https://github.com/revoltek/losoto
 
 Files: *
-Copyright: 2017 Francesco de Gasperin
+Copyright: 2017 Francesco de Gasperin <fdg@strw.leidenuniv.nl>
 License: unknown
 
 Files: debian/*
