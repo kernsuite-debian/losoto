@@ -1,0 +1,13 @@
+Description: fix python setup.py test
+
+--- losoto-1.0.orig/setup.py
++++ losoto-1.0/setup.py
+@@ -22,7 +22,7 @@ class PyTest(Command):
+ 
+     def run(self):
+         import sys,subprocess
+-        errno = subprocess.call([sys.executable, 'runtests.py'])
++        errno = subprocess.call([sys.executable, 'tools/runtests.py'])
+         raise SystemExit(errno)
+ 
+ 
