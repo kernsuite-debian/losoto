@@ -1,3 +1,9 @@
+losoto (2.0-1kern1) bionic; urgency=medium
+
+  * New upstream version 2.0
+
+ -- KERN packaging <packaging@kernsuite.info>  Thu, 17 May 2018 11:48:42 +0000
+
 losoto (1.0.1-1kern1) xenial; urgency=medium
 
   * last debian warnings
