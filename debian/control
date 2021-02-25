@@ -3,22 +3,23 @@ Section: science
 Priority: optional
 Maintainer: KERN packaging <packaging@kernsuite.info>
 Build-Depends:
- debhelper (>=9),
+ debhelper (>=11),
  dh-python,
- python-all (>= 2.6.6-3~),
- python-setuptools,
- python-tables,
+ python3-all,
+ python3-setuptools,
+ python3-tables,
  libhdf5-dev,
- python-numpy
-Standards-Version: 3.9.7
+ python3-scipy,
+ python3-numpy
+Standards-Version: 4.5.0
 Homepage: https://github.com/revoltek/losoto
-X-Python-Version: >= 2.6
+X-Python3-Version: >= 3.7
 Vcs-Git: https://github.com/kernsuite-debian/losoto
 Vcs-Browser: https://github.com/kernsuite-debian/losoto
 
-Package: losoto
-Architecture: all
-Depends: ${python:Depends}, ${misc:Depends}
+Package: python3-losoto
+Architecture: any
+Depends: ${python3:Depends}, ${misc:Depends}
 Description: LOFAR solutions tool (Python 2)
  The LOFAR Solution Tool (losoto) is a Python package which handles LOFAR
  solutions in a variety of ways. The data files used by losoto are not in the
@@ -26,4 +27,9 @@ Description: LOFAR solutions tool (Python 2)
  Losoto uses instead an innovative data file, called H5parm, which is based
  on the HDF5 standard.
  .
- This package installs the library for Python 2.
+ This package installs the library for Python 3.
+
+Package: losoto
+Architecture: all
+Depends: ${python:Depends}, ${misc:Depends}, python3-losoto
+Description: Metapackage for losoto
