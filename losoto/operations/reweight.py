@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from losoto.lib_operations import *
-import logging
+from losoto._logging import logger as logging
 
 logging.debug('Loading REWEIGHT module.')
 
@@ -15,6 +15,7 @@ def _run_parser(soltab, parser, step):
     flagBad = parser.getbool( step, 'flagBad', False )
     ncpu = parser.getint( '_global', 'ncpu', 0 )
 
+    parser.checkSpelling( step, soltab, ['mode', 'weightVal', 'nmedian', 'nstddev', 'soltabImport', 'flagBad'])
     return run(soltab, mode, weightVal, nmedian, nstddev, soltabImport, flagBad, ncpu)
 
 
@@ -24,9 +25,9 @@ def _rolling_window_lastaxis(a, window):
     import numpy as np
 
     if window < 1:
-       raise ValueError, "`window` must be at least 1."
+        raise ValueError("`window` must be at least 1.")
     if window > a.shape[-1]:
-       raise ValueError, "`window` is too long."
+        raise ValueError("`window` is too long.")
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
@@ -67,7 +68,7 @@ def _nancircstd(samples, axis=None, is_phase=True):
     return np.sqrt(-2*np.log(R))
 
 
-def _estimate_weights_window(sindx, vals, nmedian, nstddev, type, outQueue):
+def _estimate_weights_window(sindx, vals, nmedian, nstddev, stype, outQueue):
     """
     Set weights using a median-filter method
 
@@ -81,7 +82,7 @@ def _estimate_weights_window(sindx, vals, nmedian, nstddev, type, outQueue):
         Size of median time window
     nstddev: odd int
         Size of stddev time window
-    typ: str
+    stype: str
         Type of values (e.g., 'phase')
 
     """
@@ -89,8 +90,8 @@ def _estimate_weights_window(sindx, vals, nmedian, nstddev, type, outQueue):
     from scipy.ndimage import generic_filter
 
     pad_width = [(0, 0)] * len(vals.shape)
-    pad_width[-1] = ((nmedian-1)/2, (nmedian-1)/2)
-    if type == 'phase':
+    pad_width[-1] = (int((nmedian-1)/2), int((nmedian-1)/2))
+    if stype == 'phase' or stype == 'rotation':
         # Median smooth and subtract to de-trend
         if nmedian > 0:
             # Convert to real/imag
@@ -109,7 +110,7 @@ def _estimate_weights_window(sindx, vals, nmedian, nstddev, type, outQueue):
             imag[imag > 1.0] = 1.0
 
             # Calculate standard deviations
-            pad_width[-1] = ((nstddev-1)/2, (nstddev-1)/2)
+            pad_width[-1] = (int((nstddev-1)/2), int((nstddev-1)/2))
             pad_real = np.pad(real, pad_width, 'constant', constant_values=(np.nan,))
             stddev1 = _nancircstd(_rolling_window_lastaxis(pad_real, nstddev), axis=-1, is_phase=False)
             pad_imag = np.pad(imag, pad_width, 'constant', constant_values=(np.nan,))
@@ -119,10 +120,14 @@ def _estimate_weights_window(sindx, vals, nmedian, nstddev, type, outQueue):
             phase = normalize_phase(vals)
 
             # Calculate standard deviation
-            pad_width[-1] = ((nstddev-1)/2, (nstddev-1)/2)
+            pad_width[-1] = (int((nstddev-1)/2), int((nstddev-1)/2))
             pad_phase = np.pad(phase, pad_width, 'constant', constant_values=(np.nan,))
             stddev = _nancircstd(_rolling_window_lastaxis(pad_phase, nstddev), axis=-1)
     else:
+        if stype == 'amplitude':
+            # Assume lognormal distribution for amplitudes
+            vals = np.log(vals)
+
         # Median smooth and subtract to de-trend
         if nmedian > 0:
             pad_vals = np.pad(vals, pad_width, 'constant', constant_values=(np.nan,))
@@ -130,7 +135,7 @@ def _estimate_weights_window(sindx, vals, nmedian, nstddev, type, outQueue):
             vals -= med
 
         # Calculate standard deviation in larger window
-        pad_width[-1] = ((nstddev-1)/2, (nstddev-1)/2)
+        pad_width[-1] = (int((nstddev-1)/2), int((nstddev-1)/2))
         pad_vals = np.pad(vals, pad_width, 'constant', constant_values=(np.nan,))
         stddev = np.nanstd(_rolling_window_lastaxis(pad_vals, nstddev), axis=-1)
 
@@ -142,7 +147,7 @@ def _estimate_weights_window(sindx, vals, nmedian, nstddev, type, outQueue):
         good_ind = np.where(~np.logical_or(np.isnan(stddev), stddev == 0.0))
         stddev[zero_scatter_ind] = np.min(stddev[good_ind])
     if nmedian > 0:
-        fudge_factor = 2.0 # factor to compensate for smoothing
+        fudge_factor = 2.0  # factor to compensate for smoothing
     else:
         fudge_factor = 1.0
     w = 1.0 / np.square(stddev*fudge_factor)
@@ -193,7 +198,7 @@ def run( soltab, mode='uniform', weightVal=1., nmedian=3, nstddev=251,
 
         weights, axes = soltab.getValues(weight = True)
         weightsI, axesI = soltabI.getValues(weight = True)
-        if axes.keys() != axesI.keys() or weights.shape != weightsI.shape:
+        if list(axes.keys()) != list(axesI.keys()) or weights.shape != weightsI.shape:
             logging.error('Impossible to merge: two tables have with different axes values.')
             return 1
         weightsI[ np.where(weights == 0) ] = 0.
@@ -205,9 +210,6 @@ def run( soltab, mode='uniform', weightVal=1., nmedian=3, nstddev=251,
         soltab.setValues(weightVal, weight=True)
 
     elif mode == 'window':
-        if ncpu == 0:
-            import multiprocessing
-            ncpu = multiprocessing.cpu_count()
         if nmedian !=0 and nmedian % 2 == 0:
             logging.error('nmedian must be odd')
             return 1
@@ -222,7 +224,7 @@ def run( soltab, mode='uniform', weightVal=1., nmedian=3, nstddev=251,
             tindx = antindx
         mpm = multiprocManager(ncpu, _estimate_weights_window)
         for sindx, sval in enumerate(vals):
-            if np.all(sval == 0.0):
+            if np.all(sval == 0.0) or np.all(np.isnan(sval)):
                 # skip reference station
                 continue
             mpm.put([sindx, sval.swapaxes(tindx-1, -1), nmedian, nstddev, soltab.getType()])

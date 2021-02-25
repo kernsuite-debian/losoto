@@ -2,10 +2,9 @@
 # -*- coding: utf-8 -*-
 
 # This is an example operation for LoSoTo
-from __future__ import print_function
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading EXAMPLE module.')
 
@@ -14,6 +13,8 @@ def _run_parser(soltab, parser, step):
     opt1 = parser.getfloat( step, 'opt1') # no default
     opt2 = parser.getarrayfloat( step, 'opt3', [1., 2., 3.])
     opt3 = parser.getint( step, 'opt2', 0 )
+    
+    parser.checkSpelling( step, soltab, ['op1', 'opt2', 'opt3'])
     return run(soltab, opt1, opt2, opt3)
 
 # this funct can be called by python directly

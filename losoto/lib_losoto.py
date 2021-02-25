@@ -4,15 +4,21 @@
 # Some utilities for operations
 
 import os, sys, ast, re
-import logging
+import functools, warnings # for deprecated_alias decorator
+from configparser import ConfigParser
 if (sys.version_info > (3, 0)):
-    from configparser import RawConfigParser
+    #from configparser import ConfigParser
+    from io import StringIO
 else:
-    from ConfigParser import RawConfigParser
+    #from ConfigParser import ConfigParser
+    from StringIO import StringIO
+
+import numpy as np
+from losoto._logging import logger as logging
 
 cacheSteps = ['plot','clip','flag','norm','smooth'] # steps to use chaced data
 
-class LosotoParser(RawConfigParser):
+class LosotoParser(ConfigParser):
     """
     A parser for losoto parset files.
 
@@ -23,19 +29,29 @@ class LosotoParser(RawConfigParser):
     """
 
     def __init__(self, parsetFile):
-        RawConfigParser.__init__(self)
+        ConfigParser.__init__(self, inline_comment_prefixes=('#',';'))
 
-        # read parset and replace '#' with ';' to allow # as inline comments
-        # also add [_global] fake section at beginning
-        import StringIO
-        config = StringIO.StringIO()
-        config.write('[_global]\n'+open(parsetFile).read().replace('#',';'))
+        config = StringIO()
+        # add [_global] fake section at beginning
+        config.write('[_global]\n'+open(parsetFile).read())
         config.seek(0, os.SEEK_SET)
         self.readfp(config)
 
+    def checkSpelling(self, s, soltab, availValues=[]):
+        """
+        check if any value in the step is missing from a value list and return a warning
+        """
+        entries = [x.lower() for x in list(dict(self.items(s)).keys())]
+        availValues = ['soltab','operation'] + availValues + \
+                    soltab.getAxesNames() + [a+'.minmaxstep' for a in soltab.getAxesNames()] + [a+'.regexp' for a in soltab.getAxesNames()]
+        availValues = [x.lower() for x in availValues]
+        for e in entries:
+            if e not in availValues:
+                logging.warning('Mispelled option: %s - Ignoring!' % e)
+
     def getstr(self, s, v, default=None):
         if self.has_option(s, v):
-            return self.get(s, v).replace('\'','').replace('"','') # remove apex
+            return str(self.get(s, v).replace('\'','').replace('"','')) # remove apex
         elif default is None:
             logging.error('Section: %s - Values: %s: required (expected string).' % (s, v))
         else:
@@ -43,7 +59,7 @@ class LosotoParser(RawConfigParser):
 
     def getbool(self, s, v, default=None):
         if self.has_option(s, v):
-            return RawConfigParser.getboolean(self, s, v)
+            return ConfigParser.getboolean(self, s, v)
         elif default is None:
             logging.error('Section: %s - Values: %s: required (expected bool).' % (s, v))
         else:
@@ -51,7 +67,7 @@ class LosotoParser(RawConfigParser):
 
     def getfloat(self, s, v, default=None):
         if self.has_option(s, v):
-            return RawConfigParser.getfloat(self, s, v)
+            return ConfigParser.getfloat(self, s, v)
         elif default is None:
             logging.error('Section: %s - Values: %s: required (expected float).' % (s, v))
         else:
@@ -59,7 +75,7 @@ class LosotoParser(RawConfigParser):
 
     def getint(self, s, v, default=None):
         if self.has_option(s, v):
-            return RawConfigParser.getint(self, s, v)
+            return ConfigParser.getint(self, s, v)
         elif default is None:
             logging.error('Section: %s - Values: %s: required (expected int).' % (s, v))
         else:
@@ -68,7 +84,14 @@ class LosotoParser(RawConfigParser):
     def getarray(self, s, v, default=None):
         if self.has_option(s, v):
             try:
-                return self.getstr(s, v).replace(' ','').replace('[','').replace(']','').split(',') # split also turns str into 1-element lists
+                # TODO: why are square brackets being replaced here? What if my selection is a string containing square brackets?
+                # return self.getstr(s, v).replace(' ','').replace('[','').replace(']','').split(',') # split also turns str into 1-element lists
+                parm = self.getstr(s, v) # split also turns str into 1-element lists
+                if parm[0] == '[': # hardcoded for square brackets in parameter set...
+                    parm = parm[1:]
+                if parm[-1] == ']':
+                    parm = parm[:-1]
+                return parm.replace(' ','').split(',')
             except:
                 logging.error('Error interpreting section: %s - values: %s (should be a list as [xxx,yyy,zzz...])' % (s, v))
         elif default is None:
@@ -100,6 +123,20 @@ class LosotoParser(RawConfigParser):
         except:
             logging.error('Error interpreting section: %s - values: %s (expected array of int.)' % (s, v))
 
+    def getarrayfloat2d(self, s, v, default=None):
+        """Alternative to parse 1,2 or ndim array input.
+           'getarrayfloat() does not support more than 1 dim.
+           TODO: it might be cleaner to unify these functions..."""
+        try:
+            # Remove space after [
+            x = self.getstr(s, v, default)
+            x = re.sub('\[ +', '[', x.strip())
+            # Replace commas and spaces
+            x = re.sub('[,\s]+', ', ', x)
+            return np.array(ast.literal_eval(x))
+        except:
+            logging.error('Error interpreting section: %s - values: %s (expected array of float.)' % (s, v))
+
 
 def getParAxis( parser, step, axisName ):
     """
@@ -115,7 +152,7 @@ def getParAxis( parser, step, axisName ):
 
     step : str
         this step
-    
+
     axisName : str
         an axis name
 
@@ -157,7 +194,7 @@ def getParAxis( parser, step, axisName ):
 
 def getStepSoltabs(parser, step, H):
     """
-    Return a list of soltabs object for 
+    Return a list of soltabs object for a step and apply selection creteria
 
     Parameters
     ----------
@@ -205,3 +242,24 @@ def getStepSoltabs(parser, step, H):
         soltab.setSelection(**userSel)
 
     return soltabs
+
+# fancy backwards compatibility of keywords: allow aliases
+# https://stackoverflow.com/questions/49802412/how-to-implement-deprecation-in-python-with-argument-alias#
+def deprecated_alias(**aliases):
+    def deco(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            rename_kwargs(f.__name__, kwargs, aliases)
+            return f(*args, **kwargs)
+        return wrapper
+    return deco
+
+def rename_kwargs(func_name, kwargs, aliases):
+    for alias, new in aliases.items():
+        if alias in kwargs:
+            if new in kwargs:
+                raise TypeError('{} received both {} and {}'.format(
+                    func_name, alias, new))
+            warnings.warn('{} is deprecated; use {}'.format(alias, new),
+                          DeprecationWarning)
+            kwargs[new] = kwargs.pop(alias)

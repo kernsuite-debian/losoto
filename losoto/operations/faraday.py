@@ -1,24 +1,30 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading FARADAY module.')
 
 def _run_parser(soltab, parser, step):
+    soltabOut = parser.getstr( step, 'soltabOut', 'rotationmeasure000' )
     refAnt = parser.getstr( step, 'refAnt', '')
     maxResidual = parser.getfloat( step, 'maxResidual', 1. )
-    return run(soltab, refAnt, maxResidual)
+
+    parser.checkSpelling( step, soltab, ['soltabOut', 'refAnt', 'maxResidual'])
+    return run(soltab, soltabOut, refAnt, maxResidual)
 
 
-def run( soltab, refAnt='', maxResidual=1. ):
+def run( soltab, soltabOut='rotationmeasure000', refAnt='', maxResidual=1. ):
     """
     Faraday rotation extraction from either a rotation table or a circular phase (of which the operation get the polarisation difference).
 
     Parameters
     ----------
+    
+    soltabOut : str, optional
+        output table name (same solset), by deault "rotationmeasure000".
+        
     refAnt : str, optional
         Reference antenna, by default the first.
 
@@ -55,8 +61,8 @@ def run( soltab, refAnt='', maxResidual=1. ):
        return 1
 
     ants = soltab.getAxisValues('ant')
-    if refAnt != '' and not refAnt in ants:
-        logging.error('Reference antenna '+refAnt+' not found. Using: '+ants[1])
+    if refAnt != '' and refAnt != 'closest' and not refAnt in soltab.getAxisValues('ant', ignoreSelection = True):
+        logging.warning('Reference antenna '+refAnt+' not found. Using: '+ants[1])
         refAnt = ants[0]
     if refAnt == '': refAnt = ants[0]
 
@@ -65,13 +71,13 @@ def run( soltab, refAnt='', maxResidual=1. ):
 
     # create new table
     solset = soltab.getSolset()
-    soltabout = solset.makeSoltab('rotationmeasure',
+    soltabout = solset.makeSoltab('rotationmeasure', soltabName = soltabOut,
                              axesNames=['ant','time'], axesVals=[ants, times],
                              vals=np.zeros((len(ants),len(times))),
                              weights=np.ones((len(ants),len(times))))
     soltabout.addHistory('Created by FARADAY operation from %s.' % soltab.name)
 
-    for vals, weights, coord, selection in soltab.getValuesIter(returnAxes=returnAxes, weight=True, reference=refAnt):
+    for vals, weights, coord, selection in soltab.getValuesIter(returnAxes=returnAxes, weight=True, refAnt=refAnt):
 
         if len(coord['freq']) < 10:
             logging.error('Faraday rotation estimation needs at least 10 frequency channels, preferably distributed over a wide range.')
@@ -80,6 +86,7 @@ def run( soltab, refAnt='', maxResidual=1. ):
         # reorder axes
         vals = reorderAxes( vals, soltab.getAxesNames(), returnAxes )
         weights = reorderAxes( weights, soltab.getAxesNames(), returnAxes )
+        weights[np.isnan(vals)] = 0.
 
         fitrm = np.zeros(len(times))
         fitweights = np.ones(len(times)) # all unflagged to start
@@ -107,7 +114,7 @@ def run( soltab, refAnt='', maxResidual=1. ):
                         freq       = np.copy(coord['freq'])[idx]
                         phase_diff = 2.*vals[:,t][idx] # a rotation is between -pi and +pi
 
-                    if len(freq) < 30:
+                    if len(freq) < 20:
                         fitweights[t] = 0
                         logging.warning('No valid data found for Faraday fitting for antenna: '+coord['ant']+' at timestamp '+str(t))
                         continue

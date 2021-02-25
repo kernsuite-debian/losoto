@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading PREFACTOR_XYOFFSET module.')
 
 def _run_parser(soltab, parser, step):
     chanWidth = parser.getstr( step, 'chanWidth')
+
+    parser.checkSpelling( step, soltab, ['chanWidth'])
     return run(soltab, chanWidth)
 
 
@@ -40,7 +41,11 @@ def run( soltab, chanWidth ):
        logging.error("Soltab type of "+soltab.name+" is: "+solType+" but should be phase.")
        return 1
 
-    phases_tmp = np.copy(soltab.val) # axes are [time, ant, freq, pol]
+    for vals, coord, selection in soltab.getValuesIter(returnAxes=['pol','ant','freq', 'time'], weight=False):
+        vals = reorderAxes( vals, soltab.getAxesNames(), ['time', 'ant', 'freq', 'pol'] )
+        pass
+
+    phases_tmp = np.copy(vals) # axes are [time, ant, freq, pol]
     freqs = np.copy(soltab.freq)
     npol = len(soltab.pol)
     refstationID=2
@@ -82,7 +87,7 @@ def run( soltab, chanWidth ):
     nstations = len(stationsnames)
     refphases = phases_tmp[:, refstationID, :, :]
 
-    for istat in xrange(nstations):
+    for istat in range(nstations):
         phases_00 = phases_tmp[:, istat, :, 0] - refphases[:, :, 0]
         phases_11 = phases_tmp[:, istat, :, 1] - refphases[:, :, 1]
         phases_diff = normalize(phases_00 - phases_11)
@@ -94,12 +99,13 @@ def run( soltab, chanWidth ):
             global_stat_offsets = np.vstack( (global_stat_offsets, med_phases_diff) )
     global_stat_offsets_smoothed = np.zeros([nsubbands, nstations, npol])
     global_stat_offsets_smoothed_interp = np.zeros([len(freqs_new), nstations, npol])
-    for istat in xrange(nstations):
+    for istat in range(nstations):
         global_stat_offsets_smoothed[:, istat, -1] = sg.medfilt(global_stat_offsets[istat, :], kernel_size=15) # smooth over frequency
 
-        # interpolate to the output
-        real = np.interp(freqs_new, freq_per_sb, np.cos(global_stat_offsets_smoothed[:, istat, -1]))
-        imag = np.interp(freqs_new, freq_per_sb, np.sin(global_stat_offsets_smoothed[:, istat, -1]))
+        # Convert to real/imag, invert correction (so that offsets are removed when applied),
+        # and interpolate to the output frequency grid
+        real = np.interp(freqs_new, freq_per_sb, np.cos(-1. * global_stat_offsets_smoothed[:, istat, -1]))
+        imag = np.interp(freqs_new, freq_per_sb, np.sin(-1. * global_stat_offsets_smoothed[:, istat, -1]))
         global_stat_offsets_smoothed_interp[:, istat, -1] = np.arctan2(imag, real)
 
     try:

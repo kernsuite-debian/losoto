@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading FLAGEXTEND module.')
 
@@ -12,7 +12,9 @@ def _run_parser(soltab, parser, step):
     percent = parser.getfloat( step, 'percent', 50. )
     maxCycles = parser.getint( step, 'maxCycles', 3 )
     ncpu = parser.getint( '_global', 'ncpu', 0 )
-    return run(soltab, axesToExt, size, percent=50., maxCycles=3, ncpu=0)
+
+    parser.checkSpelling( step, soltab, ['axesToExt', 'size', 'percent', 'maxCycles'])
+    return run(soltab, axesToExt, size, percent, maxCycles, ncpu)
 
 
 def _flag(weights, coord, axesToExt, selection, percent=50, size=[0], maxCycles=3, outQueue=None):
@@ -42,7 +44,7 @@ def _flag(weights, coord, axesToExt, selection, percent=50, size=[0], maxCycles=
         for i, s in enumerate(size):
             if s == 0: size[i] = 2*weights.shape[i]
 
-        for cycle in xrange(maxCycles):
+        for cycle in range(maxCycles):
             flag = scipy.ndimage.filters.generic_filter((weights==0), extendFlag, size=size, mode='mirror', cval=0.0, origin=0, extra_keywords={'percent':percent})
             weights[ ( flag == 1 ) ] = 0
             # no new flags
@@ -90,10 +92,6 @@ def run( soltab, axesToExt, size, percent=50., maxCycles=3, ncpu=0 ):
     logging.info("Extending flag on soltab: "+soltab.name)
 
     # input check
-    if ncpu == 0:
-        import multiprocessing
-        ncpu = multiprocessing.cpu_count()
-    
     if axesToExt == []:
         logging.error("Please specify at least one axis to extend flag.")
         return 1

@@ -6,14 +6,16 @@
 # This operation subtract a clock and/or tec from a phase
 # Operation is flag-only capable
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading RESIDUALS module.')
 
 def _run_parser(soltab, parser, step):
     soltabsToSub = parser.getarraystr( step, 'soltabsToSub' ) # no default
     ratio = parser.getbool( step, 'ratio', False )
+
+    parser.checkSpelling( step, soltab, ['soltabsToSub','ratio'])
     return run(soltab, soltabsToSub, ratio)
 
 
@@ -47,9 +49,14 @@ def run( soltab, soltabsToSub, ratio=False ):
             # also armonise selection by copying only the axes present in the outtable and in the right order
             soltabsub.selection[i] = soltab.selection[soltab.getAxesNames().index(axisName)]
             assert (soltabsub.getAxisValues(axisName) == soltab.getAxisValues(axisName)).all() # table not conform
-    
-        if soltabsub.getType() == 'clock' or soltabsub.getType() == 'tec' or soltabsub.getType() == 'tec3rd' or soltabsub.getType() == 'rotationmeasure':
-            
+
+        if soltab.getValues(retAxesVals=False, weight=False).shape != soltabsub.getValues(retAxesVals=False, weight=False).shape:
+            hasMissingAxes = True
+        else:
+            hasMissingAxes = False
+
+        if soltabsub.getType() == 'clock' or soltabsub.getType() == 'tec' or soltabsub.getType() == 'tec3rd' or soltabsub.getType() == 'rotationmeasure' or hasMissingAxes:
+
             freq = soltab.getAxisValues('freq')
             vals = soltab.getValues(retAxesVals=False, weight=False)
             weights = soltab.getValues(retAxesVals=False, weight=True)
@@ -80,17 +87,17 @@ def run( soltab, soltabsToSub, ratio=False ):
             vals = np.swapaxes(vals, idxFreq, len(vals.shape)-1)
             valsSub = np.swapaxes(valsSub, idxFreq, len(valsSub.shape)-1)
             #print 'vals reshaped', valsSub.shape
-            
+
             # a multiplication will go along the last axis of the array
             if soltabsub.getType() == 'clock':
                 vals -= 2. * np.pi * valsSub * freq
- 
+
             elif soltabsub.getType() == 'tec':
                 vals -= -8.44797245e9 * valsSub / freq
- 
+
             elif soltabsub.getType() == 'tec3rd':
                 vals -= - 1.e21 * valsSub / np.power(freq,3)
- 
+
             elif soltabsub.getType() == 'rotationmeasure':
                 # put pol axis at the beginning
                 idxPol = soltab.getAxesNames().index('pol')
@@ -98,7 +105,7 @@ def run( soltab, soltabsToSub, ratio=False ):
                 vals = np.swapaxes(vals, idxPol, 0)
                 valsSub = np.swapaxes(valsSub, idxPol, 0)
                 #print 'vals reshaped 2', valsSub.shape
- 
+
                 wav = 2.99792458e8/freq
                 ph = wav * wav * valsSub
                 #if coord['pol'] == 'XX' or coord['pol'] == 'RR':
@@ -114,38 +121,14 @@ def run( soltab, soltabsToSub, ratio=False ):
 
                 vals = np.swapaxes(vals, 0, idxPol)
 
+            else:
+                if ratio:
+                    vals = (vals - valsSub) / valsSub
+                else:
+                    vals -= valsSub
+
             # move freq axis back
             vals = np.swapaxes(vals, len(vals.shape)-1, idxFreq)
-
-#            # the only return axes is freq, slower but better code (TOO SLOW)
-#            for vals, weights, coord, selection in soltab.getValuesIter(returnAxes='freq', weight = True):
-#                # restrict to have the same coordinates of phases
-#                for i, axisName in enumerate(soltabsub.getAxesNames()):
-#                    soltabsub.selection[i] = selection[soltab.getAxesNames().index(axisName)]
-#                print '.',
-#
-#                valsSub = np.squeeze(soltabsub.getValues(retAxesVals=False, weight=False))
-#                weightsSub = np.squeeze(soltabsub.getValues(retAxesVals=False, weight=True))
-#
-#                if soltabsub.getType() == 'clock':
-#                    vals -= 2. * np.pi * valsSub * coord['freq']
-#
-#                elif soltabsub.getType() == 'tec':
-#                    vals -= -8.44797245e9 * valsSub / coord['freq']
-#
-#                elif soltabsub.getType() == 'tec3rd':
-#                    vals -= - 1.e21 * valsSub / np.power(coord['freq'],3)
-#
-#                elif soltabsub.getType() == 'rotationmeasure':
-#                    wav = 2.99792458e8/coord['freq']
-#                    ph = wav * wav * valsSub
-#                    if coord['pol'] == 'XX' or coord['pol'] == 'RR':
-#                        vals -= ph
-#                    elif coord['pol'] == 'YY' or coord['pol'] == 'LL':
-#                        vals += ph
-#
-#                # flag data that are contaminated by flagged clock/tec data
-#                if weightsSub == 0: weights[:] = 0
 
             soltab.setValues(vals)
             soltab.setValues(weights, weight = True)
@@ -155,8 +138,8 @@ def run( soltab, soltabsToSub, ratio=False ):
             weight = soltab.getValues(retAxesVals=False, weight=True)
             weight[soltabsub.getValues(retAxesVals=False, weight=True) == 0] = 0
             soltab.setValues(weight, weight = True)
-        
+
     soltab.addHistory('RESIDUALS by subtracting tables '+' '.join(soltabsToSub))
-        
+
     return 0
 

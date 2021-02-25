@@ -3,12 +3,16 @@
 
 # This is an example operation for LoSoTo
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading CLOCKTEC module.')
 
 def _run_parser(soltab, parser, step):
+    clocksoltabOut = parser.getstr( step, 'clocksoltabOut', 'clock000' )
+    tecsoltabOut = parser.getstr( step, 'tecsoltabOut', 'tec000' )
+    offsetsoltabOut = parser.getstr( step, 'offsetsoltabOut', 'phase_offset000' )
+    tec3rdsoltabOut = parser.getstr( step, 'tec3rdsoltabOut', 'tec3rd000' )
     flagBadChannels = parser.getbool( step, 'flagBadChannels', True )
     flagCut = parser.getfloat( step, 'flagCut', 5. )
     chi2cut = parser.getfloat( step, 'chi2cut', 3000. )
@@ -17,10 +21,14 @@ def _run_parser(soltab, parser, step):
     fit3rdorder = parser.getbool( step, 'fit3rdorder', False )
     circular = parser.getbool( step, 'circular', False )
     reverse = parser.getbool( step, 'reverse', False )
-    return run(soltab, flagBadChannels, flagCut, chi2cut, combinePol, removePhaseWraps, fit3rdorder, circular, reverse)
+    invertOffset = parser.getbool( step, 'invertOffset', False )
+    nproc = parser.getint( step, 'nproc', 10 )
+
+    parser.checkSpelling( step, soltab, ['tecsoltabOut', 'clocksoltabOut', 'offsetsoltabOut', 'tec3rdsoltabOut', 'flagBadChannels', 'flagCut', 'chi2cut', 'combinePol', 'removePhaseWraps', 'fit3rdorder', 'circular', 'reverse', 'invertOffset', 'nproc'])
+    return run(soltab, tecsoltabOut, clocksoltabOut, offsetsoltabOut, tec3rdsoltabOut, flagBadChannels, flagCut, chi2cut, combinePol, removePhaseWraps, fit3rdorder, circular, reverse, invertOffset, nproc)
 
 
-def run( soltab, flagBadChannels=True, flagCut=5., chi2cut=3000., combinePol=False, removePhaseWraps=True, fit3rdorder=False, circular=False, reverse=False ):
+def run( soltab, tecsoltabOut='tec000', clocksoltabOut='clock000', offsetsoltabOut='phase_offset000', tec3rdsoltabOut='tec3rd000', flagBadChannels=True, flagCut=5., chi2cut=3000., combinePol=False, removePhaseWraps=True, fit3rdorder=False, circular=False, reverse=False, invertOffset=False, nproc=10 ):
     """
     Separate phase solutions into Clock and TEC.
     The Clock and TEC values are stored in the specified output soltab with type 'clock', 'tec', 'tec3rd'.
@@ -31,10 +39,10 @@ def run( soltab, flagBadChannels=True, flagCut=5., chi2cut=3000., combinePol=Fal
         Detect and remove bad channel before fitting, by default True.
 
     flagCut : float, optional
-        
+
 
     chi2cut : float, optional
-        
+
 
     combinePol : bool, optional
         Find a combined polarization solution, by default False.
@@ -50,9 +58,13 @@ def run( soltab, flagBadChannels=True, flagCut=5., chi2cut=3000., combinePol=Fal
 
     reverse : bool, optional
         Reverse the time axis. By default False.
+
+    invertOffset : bool, optional
+        Invert (reverse the sign of) the phase offsets. By default False. Set to True
+        if you want to use them with the residuals operation.
     """
     import numpy as np
-    from .fitClockTEC import doFit
+    from ._fitClockTEC import doFit
 
     logging.info("Clock/TEC separation on soltab: "+soltab.name)
 
@@ -71,7 +83,7 @@ def run( soltab, flagBadChannels=True, flagCut=5., chi2cut=3000., combinePol=Fal
         station_positions[i, 0] = station_dict[station_name][0]
         station_positions[i, 1] = station_dict[station_name][1]
         station_positions[i, 2] = station_dict[station_name][2]
-        
+
     returnAxes=['ant','freq','pol','time']
     for vals, flags, coord, selection in soltab.getValuesIter(returnAxes=returnAxes,weight=True):
 
@@ -90,68 +102,70 @@ def run( soltab, flagBadChannels=True, flagCut=5., chi2cut=3000., combinePol=Fal
         axes=[i for i in soltab.getAxesNames() if i in returnAxes]
 
         # reverse time axes
-        if reverse: 
+        if reverse:
             vals = np.swapaxes(np.swapaxes(vals, 0, axes.index('time'))[::-1], 0, axes.index('time'))
             flags = np.swapaxes(np.swapaxes(flags, 0, axes.index('time'))[::-1], 0, axes.index('time'))
 
         result=doFit(vals,flags==0,freqs,stations,station_positions,axes,\
-                         flagBadChannels=flagBadChannels,flagcut=flagCut,chi2cut=chi2cut,combine_pol=combinePol,removePhaseWraps=removePhaseWraps,fit3rdorder=fit3rdorder,circular=circular)
+                         flagBadChannels=flagBadChannels,flagcut=flagCut,chi2cut=chi2cut,combine_pol=combinePol,removePhaseWraps=removePhaseWraps,fit3rdorder=fit3rdorder,circular=circular,n_proc=nproc)
         if fit3rdorder:
             clock,tec,offset,tec3rd=result
-            if reverse: 
+            if reverse:
                 clock = clock[::-1,:]
                 tec = tec[::-1,:]
                 tec3rd = tec3rd[::-1,:]
         else:
             clock,tec,offset=result
-            if reverse: 
+            if reverse:
                 clock = clock[::-1,:]
                 tec = tec[::-1,:]
+        if invertOffset:
+            offset *= -1.0
 
         weights=tec>-5
         tec[np.logical_not(weights)]=0
         clock[np.logical_not(weights)]=0
         weights=np.float16(weights)
 
-        if combinePol:
-            tf_st = solset.makeSoltab('tec',
+        if combinePol or not 'pol' in soltab.getAxesNames():
+            tf_st = solset.makeSoltab('tec', soltabName = tecsoltabOut,
                              axesNames=['time', 'ant'], axesVals=[times, stations],
                              vals=tec[:,:,0],
                              weights=weights[:,:,0])
             tf_st.addHistory('CREATE (by CLOCKTECFIT operation)')
-            tf_st = solset.makeSoltab('clock',
+            tf_st = solset.makeSoltab('clock', soltabName = clocksoltabOut,
                              axesNames=['time', 'ant'], axesVals=[times, stations],
                              vals=clock[:,:,0]*1e-9,
                              weights=weights[:,:,0])
             tf_st.addHistory('CREATE (by CLOCKTECFIT operation)')
-            tf_st = solset.makeSoltab('phase_offset',
+            tf_st = solset.makeSoltab('phase', soltabName = offsetsoltabOut,
                              axesNames=['ant'], axesVals=[stations],
                              vals=offset[:,0],
                              weights=np.ones_like(offset[:,0],dtype=np.float16))
             tf_st.addHistory('CREATE (by CLOCKTECFIT operation)')
             if fit3rdorder:
-                tf_st = solset.makeSoltab('tec3rd',
+                tf_st = solset.makeSoltab('tec3rd', soltabName = tec3rdsoltabOut,
                                      axesNames=['time', 'ant'], axesVals=[times, stations],
                                      vals=tec3rd[:,:,0],
                                      weights=weights[:,:,0])
         else:
-            tf_st = solset.makeSoltab('tec',
+            tf_st = solset.makeSoltab('tec', soltabName = tecsoltabOut,
                              axesNames=['time', 'ant','pol'], axesVals=[times, stations, ['XX','YY']],
                              vals=tec,
                              weights=weights)
             tf_st.addHistory('CREATE (by CLOCKTECFIT operation)')
-            tf_st = solset.makeSoltab('clock',
+            tf_st = solset.makeSoltab('clock', soltabName = clocksoltabOut,
                              axesNames=['time', 'ant','pol'], axesVals=[times, stations, ['XX','YY']],
                              vals=clock*1e-9,
                              weights=weights)
             tf_st.addHistory('CREATE (by CLOCKTECFIT operation)')
-            tf_st = solset.makeSoltab('phase_offset',
+            tf_st = solset.makeSoltab('phase', soltabName = offsetsoltabOut,
                              axesNames=['ant','pol'], axesVals=[stations, ['XX','YY']],
                              vals=offset,
                              weights=np.ones_like(offset,dtype=np.float16))
             tf_st.addHistory('CREATE (by CLOCKTECFIT operation)')
             if fit3rdorder:
-                tf_st = solset.makeSoltab('tec3rd',
+                tf_st = solset.makeSoltab('tec3rd', soltabName = tec3rdsoltabOut,
                                      axesNames=['time', 'ant','pol'], axesVals=[times, stations, ['XX','YY']],
                                      vals=tec3rd,
                                      weights=weights)
