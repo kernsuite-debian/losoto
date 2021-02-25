@@ -3,9 +3,8 @@
 
 # This is the operation to get values from screens
 
-
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading SCREENVALUES module.')
 
@@ -17,6 +16,7 @@ def _run_parser(soltab, parser, step):
     sourceDict = parser.getstr( step, "sourceDict" )
     ncpu = parser.getint( step, "ncpu", 0 )
 
+    parser.checkSpelling( step, soltab, ['inSoltab1', 'sourceDict', 'outSoltab', 'inSoltab2'])
     return run(inSoltab1, sourceDict, outSoltab, inSoltab2, ncpu)
 
 def _calculate_tecsp(screen1, screen2, pp, directions, k, sindx, beta_val,
@@ -48,10 +48,10 @@ def _calculate_tecsp(screen1, screen2, pp, directions, k, sindx, beta_val,
 
     """
     import numpy as np
-    from losoto.operations.phasescreen import radec2xy
+    from losoto.operations.stationscreen import _radec2xy
 
     # Convert direction (RA, Dec) to (x, y)
-    x, y = radec2xy(directions[0], directions[1], midRA, midDec)
+    x, y = _radec2xy(directions[0], directions[1], midRA, midDec)
 
     # Calculate phases at freq1 and freq2
     phase1 = np.zeros(len(x))
@@ -93,10 +93,10 @@ def _calculate_val(screen, pp, directions, k, sindx, beta_val, r_0, midRA,
 
     """
     import numpy as np
-    from losoto.operations.phasescreen import radec2xy
+    from losoto.operations.stationscreen import _radec2xy
 
     # Convert direction (RA, Dec) to (x, y)
-    x, y = radec2xy(directions[0], directions[1], midRA, midDec)
+    x, y = _radec2xy(directions[0], directions[1], midRA, midDec)
 
     # Calculate values
     N_dirs = len(x)
@@ -151,11 +151,6 @@ def _screens_to_tecsp(pp, screen1, screen2, directions, station_positions,
         import progressbar
     except ImportError:
         import losoto.progressbar as progressbar
-
-    # input check
-    if ncpu == 0:
-        import multiprocessing
-        ncpu = multiprocessing.cpu_count()
 
     ra = [r for r, d in directions]
     dec = [d for r, d in directions]
@@ -223,11 +218,6 @@ def _screen_to_val(pp, screen, directions, station_positions, beta_val, r_0,
         import progressbar
     except ImportError:
         import losoto.progressbar as progressbar
-
-    # input check
-    if ncpu == 0:
-        import multiprocessing
-        ncpu = multiprocessing.cpu_count()
 
     ra = [r for r, d in directions]
     dec = [d for r, d in directions]
@@ -331,7 +321,7 @@ def run(soltab1, source_dict, outsoltab, soltab2=None, ncpu=0):
 
 
     # Collect info
-    source_names = source_dict.keys()
+    source_names = list(source_dict.keys())
     source_positions = []
     for source in source_names:
         source_positions.append(source_dict[source])
@@ -368,7 +358,7 @@ def run(soltab1, source_dict, outsoltab, soltab2=None, ncpu=0):
 
     # Update solset source table if new sources are present
     needs_update = False
-    for k, v in source_dict.iteritems():
+    for k, v in source_dict.items():
         if k not in solset.getSou():
             needs_update = True
             break
@@ -380,14 +370,14 @@ def run(soltab1, source_dict, outsoltab, soltab2=None, ncpu=0):
         sourceTable = solset.obj._f_get_child('source')
         names = []
         positions = []
-        for k, v in source_dict_orig.iteritems():
+        for k, v in source_dict_orig.items():
             # Add sources from original dict
             names.append(k)
             if type(v) is list:
                 positions.append(v)
             else:
                 positions.append(v.tolist())
-        for k, v in source_dict.iteritems():
+        for k, v in source_dict.items():
             # Add any new sources
             if k not in names:
                 names.append(k)
@@ -395,7 +385,7 @@ def run(soltab1, source_dict, outsoltab, soltab2=None, ncpu=0):
                     positions.append(v)
                 else:
                     positions.append(v.tolist())
-        sourceTable.append(zip(*(names, positions)))
+        sourceTable.append(list(zip(*(names, positions))))
 
     # Write the results to the output soltab(s)
     dirs_out = source_names

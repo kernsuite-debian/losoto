@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading POLALIGN module.')
 
@@ -12,11 +12,14 @@ def _run_parser(soltab, parser, step):
     fitOffset = parser.getbool( step, 'fitOffset', False )
     average = parser.getbool( step, 'average', False )
     replace = parser.getbool( step, 'replace', False )
+    minFreq = parser.getfloat( step, 'minFreq', 0 )
     refAnt = parser.getstr( step, 'refAnt', '' )
-    return run(soltab, soltabOut, maxResidual, fitOffset, average, replace, refAnt)
+
+    parser.checkSpelling( step, soltab, ['soltabOut', 'maxResidual', 'fitOffset', 'average', 'replace', 'minFreq', 'refAnt'])
+    return run(soltab, soltabOut, maxResidual, fitOffset, average, replace, minFreq, refAnt)
 
 
-def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average=False, replace=False, refAnt='' ):
+def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average=False, replace=False, minFreq=0, refAnt='' ):
     """
     Estimate polarization misalignment as delay.
 
@@ -36,7 +39,10 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
     
     replace : bool, optional
         replace using smoothed value instead of flag bad data? Smooth must be active. By default, False.
-        
+
+    minFreq : float, optional
+        minimum frequency [Hz] to use in estimating the PA. By default, 0 (all freqs).
+
     refAnt : str, optional
         Reference antenna, by default the first.
     """
@@ -55,8 +61,8 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
         logging.warning("Soltab type of "+soltab.name+" is of type "+solType+", should be phase. Ignoring.")
         return 1
     
-    if refAnt != '' and not refAnt in soltab.getAxisValues('ant'):
-        logging.error('Reference antenna '+refAnt+' not found. Using: '+soltab.getAxisValues('ant')[1])
+    if refAnt != '' and refAnt != 'closest' and not refAnt in soltab.getAxisValues('ant', ignoreSelection = True):
+        logging.warning('Reference antenna '+refAnt+' not found. Using: '+soltab.getAxisValues('ant')[1])
         refAnt = soltab.getAxisValues('ant')[1]
     if refAnt == '': refAnt = soltab.getAxisValues('ant')[1]
 
@@ -65,8 +71,8 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
 
     # create new table
     solset = soltab.getSolset()
-    soltabout = solset.makeSoltab(soltype = soltab.getType(), soltabName = soltabOut, axesNames=soltab.getAxesNames(), \
-                      axesVals=[soltab.getAxisValues(axisName) for axisName in soltab.getAxesNames()], \
+    soltabout = solset.makeSoltab(soltype = soltab.getType(), soltabName = soltabOut, axesNames=soltab.getAxesNames(),
+                      axesVals=[soltab.getAxisValues(axisName) for axisName in soltab.getAxesNames()],
                       vals=soltab.getValues(retAxesVals = False), weights=soltab.getValues(weight = True, retAxesVals = False))
     soltabout.addHistory('Created by POLALIGN operation from %s.' % soltab.name)
 
@@ -76,7 +82,7 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
         logging.error('Cannot reference to known polarisation.')
         return 1
 
-    for vals, weights, coord, selection in soltab.getValuesIter(returnAxes=['freq','pol','time'], weight=True, reference=refAnt):
+    for vals, weights, coord, selection in soltab.getValuesIter(returnAxes=['freq','pol','time'], weight=True, refAnt=refAnt):
 
         # reorder axes
         vals = reorderAxes( vals, soltab.getAxesNames(), ['pol','freq','time'] )
@@ -98,7 +104,7 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
             for t, time in enumerate(times):
 
                 # apply flags
-                idx       = ( (weights[coord1,:,t] != 0.) & (weights[coord2,:,t] != 0.))# & (coord['freq'] > 45.e6) & (coord['freq'] < 70.e6) )
+                idx       = ( (weights[coord1,:,t] != 0.) & (weights[coord2,:,t] != 0.) & (coord['freq'] > minFreq) )
                 freq      = np.copy(coord['freq'])[idx]
                 phase1    = vals[coord1,:,t][idx]
                 phase2    = vals[coord2,:,t][idx]
@@ -137,12 +143,13 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
                     fit_weights.append(1.)
                 else:       
                     # high residual, flag
-                    logging.warning('Bad solution for ant: '+coord['ant']+' (time: '+str(t)+', residual: '+str(residual)+') -> ignoring.')
+                    logging.debug('Bad solution for ant: '+coord['ant']+' (time: '+str(t)+', residual: '+str(residual)+') -> ignoring.')
                     fit_weights.append(0.)
 
                 # Debug plot
                 doplot = False
-                if doplot and t%100==0 and coord['ant'] == 'RS310LBA':
+                #if doplot and t%100==0 and (coord['ant'] == 'RS310LBA' or coord['ant'] == 'CS301LBA'):
+                if doplot and t%10==0 and (coord['ant'] == 'W04'):
                     if not 'matplotlib' in sys.modules:
                         import matplotlib as mpl
                         mpl.rc('figure.subplot',left=0.05, bottom=0.05, right=0.95, top=0.95,wspace=0.22, hspace=0.22 )
@@ -155,7 +162,7 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
 
                     # plot rm fit
                     plotdelay = lambda delay, offset, freq: np.mod( delay*freq + offset + np.pi, 2.*np.pi) - np.pi
-                    ax.plot(freq, fitresultdelay[0]*freq + fitresultdelay[1], "-", color='purple')
+                    ax.plot(freq, fitresultdelay[0]*freq + fitresultdelay[1], "-", color='purple', label=r'delay:%f$\nu$ (ns) + %f ' % (fitresultdelay[0]*1e9,fitresultdelay[1]) )
 
                     ax.plot(freq, np.mod(phase1 + np.pi, 2.*np.pi) - np.pi, 'ob' )
                     ax.plot(freq, np.mod(phase2 + np.pi, 2.*np.pi) - np.pi, 'og' )
@@ -170,6 +177,7 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
                     #ax.set_ylim(ymin=-np.pi, ymax=np.pi)
 
                     logging.warning('Save pic: '+str(t)+'_'+coord['ant']+'.png')
+                    fig.legend(loc='upper left')
                     plt.savefig(coord['ant']+'_'+str(t)+'.png', bbox_inches='tight')
                     del fig
             # end cycle in time
@@ -195,7 +203,7 @@ def run( soltab, soltabOut='phasediff', maxResidual=1., fitOffset=False, average
                     fit_delays[ fit_weights == 0 ] = fit_delays_bkp
                     fit_offset[ fit_weights == 0 ] = fit_offset_bkp
 
-            logging.debug('%s: average delay: %f ns (offset: %f)' % ( coord['ant'], np.mean(fit_delays)*1e9, np.mean(fit_offset)))
+            logging.info('%s: average delay: %f ns (offset: %f)' % ( coord['ant'], np.mean(fit_delays)*1e9, np.mean(fit_offset)))
             for t, time in enumerate(times):
                 #vals[:,:,t] = 0.
                 #vals[coord1,:,t] = fit_delays[t]*np.array(coord['freq'])/2.

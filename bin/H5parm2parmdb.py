@@ -10,7 +10,6 @@ _author = "Francesco de Gasperin (astro@voo.it), David Rafferty (drafferty@hs.un
 import sys, os, glob, re, time
 import numpy as np
 import shutil
-import logging
 import pyrap.tables as pt
 import lofar.parmdb
 from losoto import _version
@@ -137,27 +136,27 @@ def getSoltabFromSolType(solType, solTabs, parm='ampl'):
         # Handle gain table separately, as we need to distinguish ampl and phase
         if solType == 'DirectionalGain' or solType == 'Gain':
             if (parm == 'ampl' or parm == 'real') and st.getType() == 'amplitude':
-                if hasattr(st._v_attrs, 'parmdb_type'):
-                    if st._v_attrs['parmdb_type'] is not None:
-                        if solType in st._v_attrs['parmdb_type'].split(', '):
+                if hasattr(st.obj._v_attrs, 'parmdb_type'):
+                    if st.obj._v_attrs['parmdb_type'] is not None:
+                        if solType in st.obj._v_attrs['parmdb_type'].split(', '):
                             solTabList.append(st)
                     else:
                         solTabList.append(st)
                 else:
                     solTabList.append(st)
             elif (parm == 'phase' or parm == 'imag') and st.getType() == 'phase':
-                if hasattr(st._v_attrs, 'parmdb_type'):
-                    if st._v_attrs['parmdb_type'] is not None:
-                        if solType in st._v_attrs['parmdb_type'].split(', '):
+                if hasattr(st.obj._v_attrs, 'parmdb_type'):
+                    if st.obj._v_attrs['parmdb_type'] is not None:
+                        if solType in st.obj._v_attrs['parmdb_type'].split(', '):
                             solTabList.append(st)
                     else:
                         solTabList.append(st)
                 else:
                     solTabList.append(st)
         else:
-            if hasattr(st._v_attrs, 'parmdb_type'):
-                if st._v_attrs['parmdb_type'] is not None:
-                    if solType in st._v_attrs['parmdb_type'].split(', '):
+            if hasattr(st.obj._v_attrs, 'parmdb_type'):
+                if st.obj._v_attrs['parmdb_type'] is not None:
+                    if solType in st.obj._v_attrs['parmdb_type'].split(', '):
                         solTabList.append(st)
                 else:
                     if (solType == 'RotationAngle' or solType == 'CommonRotationAngle') and st.getType() == 'rotation':
@@ -207,12 +206,12 @@ def makeTECparmdb(H, solset, TECsolTab, timewidths, freq, freqwidth):
     solset = H.getSolset(solset)
 
     station_dict = solset.getAnt()
-    station_names = station_dict.keys()
-    station_positions = station_dict.values()
+    station_names = list(station_dict.keys())
+    station_positions = list(station_dict.values())
 
     source_dict = solset.getSou()
-    source_names = source_dict.keys()
-    source_positions = source_dict.values()
+    source_names = list(source_dict.keys())
+    source_positions = list(source_dict.values())
 
     tec_sf = solset.getSoltab(TECsolTab)
     tec_screen, axis_vals = tec_sf.getValues()
@@ -342,11 +341,14 @@ if __name__=='__main__':
     (options, args) = opt.parse_args()
     global ipbar, pbar
 
+    logger = _logging.Logger('info')
+    logging = _logging.logger
+
     # Check options
     if len(args) != 2:
         opt.print_help()
         sys.exit()
-    if options.verbose: _logging.setLevel("debug")
+    if options.verbose: logger.set_level("debug")
 
     # Check input H5parm file
     h5parmFile = args[0]
@@ -428,7 +430,7 @@ if __name__=='__main__':
     # Look for tecscreen solution table in the solset. If
     # found, add to solTypes
     st_tec = None
-    for st in solTab:
+    for st in solTabs:
         if st.getType() == 'tecscreen':
             st_tec = st
     if st_tec is not None:
@@ -468,7 +470,7 @@ if __name__=='__main__':
 
         # Add default values and steps
         DefValues = pdb_in.getDefValues()
-        for k, v in DefValues.iteritems():
+        for k, v in DefValues.items():
             pdb_out.addDefValues({k: pdb.makeDefValue(v.item(0))})
         pdb_out.setDefaultSteps(pdb_in.getDefaultSteps())
 
@@ -492,59 +494,59 @@ if __name__=='__main__':
 
                     # search in the cache for open soltab
                     if not solTab.getType() in cachedSolTabs:
-                        cachedSolTabs[solTab.getType()] = soltab
+                        cachedSolTabs[solTab.getType()] = solTab
                     else:
-                        soltab = cachedSolTabs[solTab.getType()]
-                        soltab.setSelection()
+                        solTab = cachedSolTabs[solTab.getType()]
+                        solTab.setSelection()
 
                     freqs = data[solEntry]['freqs']
                     times = data[solEntry]['times']
                     parms = {}
 
-                    if 'ant' in soltab.getAxesNames():
+                    if 'ant' in solTab.getAxesNames():
                         parms['ant'] = [ant]
                         # skip missing antennas (e.g. internationals sometimes are retained in the parmdb)
-                        if not ant in soltab.getAxisValues('ant'): continue
-                    if 'pol' in soltab.getAxesNames(): parms['pol'] = [pol]
-                    if 'dir' in soltab.getAxesNames(): parms['dir'] = [dir]
-                    if 'freq' in soltab.getAxesNames(): parms['freq'] = freqs.tolist()
+                        if not ant in solTab.getAxisValues('ant'): continue
+                    if 'pol' in solTab.getAxesNames(): parms['pol'] = [pol]
+                    if 'dir' in solTab.getAxesNames(): parms['dir'] = [dir]
+                    if 'freq' in solTab.getAxesNames(): parms['freq'] = freqs.tolist()
                     # workaround for bbs and ndppp dealing differently with the last time slot when #timeslots%ntime != 0
                     # NDPPP has all intervals the same
                     # BBS has a maller interval in the last timeslot which is compensated here
                     if times[-1] - times[-2] < times[-2] - times[-3]: times[-1] = times[-2] + (times[-2] - times[-3])
-                    if 'time' in soltab.getAxesNames(): parms['time'] = {'min':np.min(times-0.1), 'max':np.max(times+0.1)}
-                    soltab.setSelection(**parms)
+                    if 'time' in solTab.getAxesNames(): parms['time'] = {'min':np.min(times-0.1), 'max':np.max(times+0.1)}
+                    solTab.setSelection(**parms)
 
                     # If needed, convert Amp and Phase to Real and Imag
                     if parm == 'Real':
                         solTabList = getSoltabFromSolType(solType, solTabs, parm='phase')
                         if not solTabList[0].getType() in cachedSolTabs:
-                            soltab_ph = solTabList[0]
-                            cachedSolTabs[solTabList[0].getType()] = soltab_ph
+                            solTab_ph = solTabList[0]
+                            cachedSolTabs[solTabList[0].getType()] = solTab_ph
                         else:
-                            soltab_ph = cachedSolTabs[solTabList[0].getType()]
-                        soltab_ph.setSelection(ant=[ant], pol=[pol], dir=[dir], freq=freqs.tolist(),
+                            solTab_ph = cachedSolTabs[solTabList[0].getType()]
+                        solTab_ph.setSelection(ant=[ant], pol=[pol], dir=[dir], freq=freqs.tolist(),
                             time={'min':np.min(times-0.1), 'max':np.max(times+0.1)})
-                        val_phase = soltab_ph.getValues()[0]
-                        val_amp = soltab.getValues()[0]
+                        val_phase = solTab_ph.getValues()[0]
+                        val_amp = solTab.getValues()[0]
                         val = val_amp * np.cos(val_phase)
                     elif parm == 'Imag':
                         solTabList = getSoltabFromSolType(solType, solTabs, parm='ampl')
                         if not solTabList[0].getType() in cachedSolTabs:
-                            soltab_amp = solTabList[0]
-                            cachedSolTabs[solTabList[0].getType()] = soltab_amp
+                            solTab_amp = solTabList[0]
+                            cachedSolTabs[solTabList[0].getType()] = solTab_amp
                         else:
-                            soltab_amp = cachedSolTabs[solTabList[0].getType()]
-                        soltab_amp.setSelection(ant=[ant], pol=[pol], dir=[dir], freq=freqs.tolist(),
+                            solTab_amp = cachedSolTabs[solTabList[0].getType()]
+                        solTab_amp.setSelection(ant=[ant], pol=[pol], dir=[dir], freq=freqs.tolist(),
                             time={'min':np.min(times-0.1), 'max':np.max(times+0.1)})
-                        val_phase = soltab.getValues()[0]
-                        val_amp = soltab_amp.getValues()[0]
+                        val_phase = solTab.getValues()[0]
+                        val_amp = solTab_amp.getValues()[0]
                         val = val_amp * np.sin(val_phase)
                     else:
-                        val = soltab.getValues()[0]
+                        val = solTab.getValues()[0]
 
                     # Apply flags
-                    weights = soltab.getValues(weight=True)[0]
+                    weights = solTab.getValues(weight=True)[0]
 
                     # etienne part; if it is borken, curse his name
                     # check whether this is clock or tec; if so, reshape properly to account for all freqs in the parmdb
@@ -561,10 +563,10 @@ if __name__=='__main__':
                     flags = np.zeros(shape=weights.shape, dtype=bool)
                     flags[np.where(weights == 0)] = True
                     if parm == 'Real':
-                        weights2 = sf_phase.getValues(weight=True)[0]
+                        weights2 = solTab_ph.getValues(weight=True)[0]
                         flags[np.where(weights2 == 0)] = True
                     if parm == 'Imag':
-                        weights2 = sf_amp.getValues(weight=True)[0]
+                        weights2 = solTab_amp.getValues(weight=True)[0]
                         flags[np.where(weights2 == 0)] = True
                     np.putmask(val, flags, np.nan)
 
@@ -580,7 +582,7 @@ if __name__=='__main__':
                     #for t in sf.time: print '%.1f' % t
                     try:
                         data_out[solEntry]['values'] = val.T.reshape(shape)
-                    except ValueError, err:
+                    except ValueError as err:
                         logging.critical('Mismatch between parmdb table and H5parm '
                         'solution table: Differing number of frequencies and/or times')
                         sys.exit(1)

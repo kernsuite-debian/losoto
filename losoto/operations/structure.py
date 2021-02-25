@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import logging
 from losoto.lib_operations import *
+from losoto._logging import logger as logging
 
 logging.debug('Loading STRUCTURE module.')
 
@@ -11,6 +11,8 @@ def _run_parser(soltab, parser, step):
     refAnt = parser.getstr( step, 'refAnt', '')
     plotName = parser.getstr( step, 'plotName', '' )
     ndiv = parser.getint( step, 'ndiv', 1 )
+
+    parser.checkSpelling( step, soltab, ['doUnwrap', 'refAnt', 'plotName', 'ndiv'])
     return run(soltab, doUnwrap, refAnt, plotName, ndiv)
 
 
@@ -44,8 +46,8 @@ def run( soltab, doUnwrap=False, refAnt='', plotName='', ndiv=1 ):
        return 1
 
     ants = soltab.getAxisValues('ant')
-    if refAnt != '' and not refAnt in ants:
-        logging.error('Reference antenna '+refAnt+' not found. Using: '+ants[1])
+    if refAnt != '' and refAnt != 'closest' and not refAnt in soltab.getAxisValues('ant', ignoreSelection = True):
+        logging.warning('Reference antenna '+refAnt+' not found. Using: '+ants[1])
         refAnt = ants[1]
     if refAnt == '' and doUnwrap:
         logging.error('Unwrap requires reference antenna. Using: '+ants[1])
@@ -56,7 +58,7 @@ def run( soltab, doUnwrap=False, refAnt='', plotName='', ndiv=1 ):
 
     posAll = soltab.getSolset().getAnt()
 
-    for vals, weights, coord, selection in soltab.getValuesIter(returnAxes=['freq','pol','ant','time'], weight=True, reference=refAnt):
+    for vals, weights, coord, selection in soltab.getValuesIter(returnAxes=['freq','pol','ant','time'], weight=True, refAnt=refAnt):
 
         # reorder axes
         vals = reorderAxes( vals, soltab.getAxesNames(), ['pol','ant','freq','time'] )
